@@ -178,50 +178,36 @@ int main(void)
 			idx_muestra++;
 		}
 
-		/* ── Paso 2: Buffer lleno → procesar ── */
 		if (idx_muestra >= BUFFER_LEN) {
-			idx_muestra = 0;
+		    idx_muestra = 0;
 
-			if (!calibrado) {
-				/* Primera vez: establecer línea base */
-				SHM_Resultado res_cal;
-				if (SHM_Procesar(buffer_muestras, BUFFER_LEN, NULL, &res_cal) == 0) {
-					SHM_GrabarLineaBase(&linea_base, res_cal.picos, res_cal.n_picos);
-					calibrado = 1;
-					printf("Linea base grabada: %lu modos\r\n",
-							(unsigned long)linea_base.n_picos);
-					for (uint32_t i = 0; i < linea_base.n_picos; i++) {
-						printf("  Modo %lu: %.2f Hz\r\n",
-								(unsigned long)(i+1),
-								linea_base.picos[i].frecuencia_hz);
-					}
-				}
+		    /* Calcular espectro con Welch (sin línea base) */
+		    SHM_Resultado res_test;
+		    if (SHM_Procesar(buffer_muestras, BUFFER_LEN, NULL, &res_test) == 0) {
 
-			} else {
-				/* Medición normal contra línea base */
-				if (SHM_Procesar(buffer_muestras, BUFFER_LEN,
-						&linea_base, &resultado_shm) == 0) {
+		        /* Enviar espectro completo en formato CSV:
+		         * frecuencia,magnitud  — Python lo grafica en tiempo real */
+		        printf("ESPECTRO_START\r\n");
+		        for (uint32_t k = 0; k < SHM_N / 2; k++) {
+		            float freq = (float)k * SHM_FS_HZ / (float)SHM_N;
+		            /* Solo bins con frecuencia útil: 0.1 Hz a 20 Hz para edificios */
+		            if (freq > 0.1f && freq < 20.0f) {
+		                printf("%.3f,%.6f\r\n",
+		                       freq,
+		                       res_test.picos[k < res_test.n_picos ? k : 0].magnitud);
+		            }
+		        }
+		        printf("ESPECTRO_END\r\n");
 
-					printf("--- SHM ---  DI: %.4f  ",
-							resultado_shm.damage_index);
-
-					switch (resultado_shm.estado) {
-					case SHM_ESTADO_SANO:
-						printf("SANO\r\n"); break;
-					case SHM_ESTADO_VIGILAR:
-						printf("VIGILAR\r\n"); break;
-					case SHM_ESTADO_ALERTA:
-						printf("*** ALERTA ***\r\n"); break;
-					}
-
-					for (uint32_t i = 0; i < resultado_shm.n_picos; i++) {
-						printf("  Modo %lu: %.2f Hz  mag=%.4f\r\n",
-								(unsigned long)(i+1),
-								resultado_shm.picos[i].frecuencia_hz,
-								resultado_shm.picos[i].magnitud);
-					}
-				}
-			}
+		        /* Picos detectados */
+		        printf("PICOS: %lu\r\n", (unsigned long)res_test.n_picos);
+		        for (uint32_t i = 0; i < res_test.n_picos; i++) {
+		            printf("  PICO %lu: %.2f Hz  mag=%.5f\r\n",
+		                   (unsigned long)(i+1),
+		                   res_test.picos[i].frecuencia_hz,
+		                   res_test.picos[i].magnitud);
+		        }
+		    }
 		}
 		/* USER CODE END WHILE */
 
