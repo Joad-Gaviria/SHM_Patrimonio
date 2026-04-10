@@ -1,7 +1,7 @@
-../Core/Src/shm.c:54:6:SHM_AplicarVentanaHanning	2
-../Core/Src/shm.c:90:10:SHM_LongitudBufferWelch	1
-../Core/Src/shm.c:96:10:SHM_Welch	9
-../Core/Src/shm.c:186:6:SHM_DetectarPicos	9
-../Core/Src/shm.c:232:6:SHM_GrabarLineaBase	2
-../Core/Src/shm.c:266:7:SHM_CalcularDamageIndex	8
-../Core/Src/shm.c:307:5:SHM_Procesar	6
+../Core/Src/shm.c:59:6:SHM_AplicarVentanaHanning	2
+../Core/Src/shm.c:95:10:SHM_LongitudBufferWelch	1
+../Core/Src/shm.c:101:10:SHM_Welch	9
+../Core/Src/shm.c:206:6:SHM_DetectarPicos	10
+../Core/Src/shm.c:257:6:SHM_GrabarLineaBase	2
+../Core/Src/shm.c:291:7:SHM_CalcularDamageIndex	8
+../Core/Src/shm.c:332:5:SHM_Procesar	2

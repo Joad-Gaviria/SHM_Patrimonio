@@ -1,125 +1,244 @@
 import serial
-import serial.tools.list_ports  # Nueva librería para listar puertos
+import serial.tools.list_ports
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.animation as animation
-import sys
+import tkinter as tk
+from tkinter import ttk, messagebox
 
 
-def seleccionar_puerto():
-    """Lista los puertos disponibles y permite al usuario elegir uno."""
-    puertos = list(serial.tools.list_ports.comports())
+class SismografoApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("SHM - Sismógrafo Popayán")
+        self.root.geometry("1000x800")
 
-    if not puertos:
-        print("No se encontraron puertos COM disponibles.")
-        sys.exit()
+        self.ser = None
+        self.running = False
 
-    print("\n--- Puertos COM Disponibles ---")
-    for i, p in enumerate(puertos):
-        print(f"[{i}] {p.device} - {p.description}")
+        # Datos del espectro (se actualizan cuando llega ESPECTRO_END)
+        self.freqs = []
+        self.mags = []
+        self.historial_energia = []
 
-    while True:
+        # Estado del parser de protocolo
+        self.en_espectro = False  # True entre ESPECTRO_START y ESPECTRO_END
+        self.freqs_tmp = []
+        self.mags_tmp = []
+
+        # Buffer de líneas incompletas (puede llegar medio línea en un read)
+        self.line_buffer = ""
+
+        self.setup_ui()
+
+    def setup_ui(self):
+        control_frame = ttk.LabelFrame(
+            self.root, text="Configuración de Conexión", padding=10
+        )
+        control_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+
+        ttk.Label(control_frame, text="Puerto COM:").pack(side=tk.LEFT, padx=5)
+        self.combo_puertos = ttk.Combobox(
+            control_frame, width=12, postcommand=self.actualizar_puertos
+        )
+        self.combo_puertos.pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(
+            control_frame, text="Actualizar", command=self.actualizar_puertos
+        ).pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(control_frame, text="Baudrate:").pack(side=tk.LEFT, padx=5)
+        self.baudrate = ttk.Combobox(
+            control_frame, values=[9600, 115200, 230400, 921600], width=8
+        )
+        self.baudrate.set(115200)
+        self.baudrate.pack(side=tk.LEFT, padx=5)
+
+        self.btn_conectar = ttk.Button(
+            control_frame, text="Conectar", command=self.toggle_conexion
+        )
+        self.btn_conectar.pack(side=tk.LEFT, padx=10)
+
+        self.lbl_status = ttk.Label(
+            control_frame, text="Desconectado", foreground="red"
+        )
+        self.lbl_status.pack(side=tk.LEFT, padx=10)
+
+        # Label de diagnóstico — muestra la última línea recibida
+        self.lbl_debug = ttk.Label(
+            control_frame, text="—", foreground="gray", font=("Courier", 9)
+        )
+        self.lbl_debug.pack(side=tk.RIGHT, padx=10)
+
+        # Gráficos
+        self.fig, (self.ax1, self.ax2) = plt.subplots(2, 1, figsize=(9, 6))
+        self.fig.tight_layout(pad=4.0)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self.ani = animation.FuncAnimation(
+            self.fig, self.actualizar_grafico, interval=300, cache_frame_data=False
+        )
+
+    def actualizar_puertos(self):
+        puertos = [p.device for p in serial.tools.list_ports.comports()]
+        self.combo_puertos["values"] = puertos
+        if puertos:
+            self.combo_puertos.set(puertos[0])
+
+    def toggle_conexion(self):
+        if not self.running:
+            puerto = self.combo_puertos.get()
+            if not puerto:
+                messagebox.showwarning("Advertencia", "Selecciona un puerto COM.")
+                return
+            try:
+                self.ser = serial.Serial(puerto, int(self.baudrate.get()), timeout=0)
+                self.running = True
+                self.line_buffer = ""
+                self.en_espectro = False
+                self.btn_conectar.config(text="Desconectar")
+                self.lbl_status.config(text=f"Conectado: {puerto}", foreground="green")
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudo abrir el puerto:\n{e}")
+        else:
+            self.running = False
+            if self.ser and self.ser.is_open:
+                self.ser.close()
+            self.btn_conectar.config(text="Conectar")
+            self.lbl_status.config(text="Desconectado", foreground="red")
+
+    def leer_datos(self):
+        """
+        Lee TODOS los bytes disponibles en el buffer serial y los procesa
+        línea por línea. Nunca bloquea — si no hay datos, retorna de inmediato.
+
+        El truco clave es acumular en self.line_buffer los bytes que llegan
+        parcialmente y solo procesar cuando encontramos un '\n' completo.
+        """
+        if not (self.ser and self.ser.is_open):
+            return
+
         try:
-            opcion = int(input("\nSelecciona el número del puerto: "))
-            if 0 <= opcion < len(puertos):
-                return puertos[opcion].device
-            else:
-                print("Opción fuera de rango.")
-        except ValueError:
-            print("Por favor, ingresa un número válido.")
+            # Leer todo lo disponible de una vez (no bloqueante)
+            n = self.ser.in_waiting
+            if n == 0:
+                return
 
+            raw = self.ser.read(n)
+            self.line_buffer += raw.decode("utf-8", errors="ignore")
 
-# --- Configuración Inicial ---
-PORT = seleccionar_puerto()
-BAUD = 115200
+        except Exception:
+            return
 
-try:
-    ser = serial.Serial(PORT, BAUD, timeout=2)
-    print(f"Conectado exitosamente a {PORT}")
-except Exception as e:
-    print(f"Error al abrir el puerto {PORT}: {e}")
-    sys.exit()
+        # Procesar todas las líneas completas que haya en el buffer
+        while "\n" in self.line_buffer:
+            linea, self.line_buffer = self.line_buffer.split("\n", 1)
+            linea = linea.strip()
+            if linea:
+                self.procesar_linea(linea)
 
-freqs = []
-mags = []
+    def procesar_linea(self, linea):
+        """Máquina de estados del protocolo serial."""
 
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
-fig.suptitle("SHM - Sismógrafo Popayán", fontsize=14)
-
-
-def leer_espectro():
-    global freqs, mags
-    if ser.in_waiting > 0:  # Solo leer si hay datos esperando
-        linea = ser.readline().decode("utf-8", errors="ignore").strip()
+        # Mostrar última línea recibida en el label de debug
+        self.lbl_debug.config(text=linea[:60])
 
         if linea == "ESPECTRO_START":
-            f_tmp, m_tmp = [], []
-            while True:
-                l = ser.readline().decode("utf-8", errors="ignore").strip()
-                if l == "ESPECTRO_END":
-                    break
-                if "," in l:
-                    try:
-                        f, m = l.split(",")
-                        f_tmp.append(float(f))
-                        m_tmp.append(float(m))
-                    except:
-                        pass
-            if f_tmp:
-                freqs, mags = f_tmp, m_tmp
+            self.en_espectro = True
+            self.freqs_tmp = []
+            self.mags_tmp = []
+            return
+
+        if linea == "ESPECTRO_END":
+            self.en_espectro = False
+            # Solo actualizar si llegaron datos válidos
+            if len(self.freqs_tmp) > 2:
+                self.freqs = list(self.freqs_tmp)
+                self.mags = list(self.mags_tmp)
+            return
+
+        if self.en_espectro:
+            # Línea de dato: "0.195,0.000123"
+            if "," in linea:
+                try:
+                    partes = linea.split(",")
+                    f = float(partes[0])
+                    m = float(partes[1])
+                    self.freqs_tmp.append(f)
+                    self.mags_tmp.append(m)
+                except (ValueError, IndexError):
+                    pass
+            return
+
+        # Líneas fuera del espectro (RAW, PICOS, debug) — solo mostrar en label
+        # No hacer nada más para no interferir con el plot
+
+    def actualizar_grafico(self, frame):
+        """Llamado por FuncAnimation cada 300ms."""
+        self.leer_datos()
+
+        if not self.freqs:
+            return
+
+        # ── Gráfico 1: Espectro FFT ──
+        self.ax1.clear()
+        self.ax1.plot(self.freqs, self.mags, color="#1f77b4", linewidth=1.5)
+        self.ax1.fill_between(self.freqs, self.mags, alpha=0.25, color="#1f77b4")
+        self.ax1.set_title(
+            "Espectro de Frecuencia (FFT)", fontsize=10, fontweight="bold"
+        )
+        self.ax1.set_xlabel("Frecuencia (Hz)")
+        self.ax1.set_ylabel("Magnitud (g)")
+        self.ax1.set_xlim([0, 20])
+        self.ax1.set_ylim(bottom=0)
+        self.ax1.grid(True, linestyle="--", alpha=0.5)
+
+        # Marcar picos automáticamente
+        if len(self.mags) > 2:
+            max_m = max(self.mags)
+            if max_m > 0:
+                umbral = max_m * 0.3
+                for i in range(1, len(self.mags) - 1):
+                    if (
+                        self.mags[i] > umbral
+                        and self.mags[i] > self.mags[i - 1]
+                        and self.mags[i] > self.mags[i + 1]
+                    ):
+                        self.ax1.annotate(
+                            f"{self.freqs[i]:.2f} Hz",
+                            xy=(self.freqs[i], self.mags[i]),
+                            xytext=(4, 6),
+                            textcoords="offset points",
+                            fontsize=8,
+                            color="red",
+                            arrowprops=dict(arrowstyle="->", color="red", lw=0.8),
+                        )
+
+        # ── Gráfico 2: Energía acumulada ──
+        energia = sum(m * m for m in self.mags) ** 0.5
+        self.historial_energia.append(energia)
+        if len(self.historial_energia) > 60:
+            self.historial_energia.pop(0)
+
+        self.ax2.clear()
+        self.ax2.plot(self.historial_energia, color="#2ca02c", linewidth=2)
+        self.ax2.set_title("Tendencia de Energía", fontsize=10, fontweight="bold")
+        self.ax2.set_xlabel("Ciclos de medición")
+        self.ax2.set_ylabel("Energía (g·rms)")
+        self.ax2.grid(True, linestyle="--", alpha=0.5)
+
+        self.fig.tight_layout(pad=3.0)
 
 
-def actualizar(frame):
-    leer_espectro()
-    if not freqs:
-        return
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = SismografoApp(root)
 
-    # Gráfico 1: Espectro FFT
-    ax1.clear()
-    ax1.plot(freqs, mags, "b-", linewidth=1)
-    ax1.fill_between(freqs, mags, alpha=0.3)
-    ax1.set_xlabel("Frecuencia (Hz)")
-    ax1.set_ylabel("Magnitud (g)")
-    ax1.set_title(f"Espectro de Vibración (Puerto: {PORT})")
-    ax1.grid(True, alpha=0.3)
-    ax1.set_xlim([0, 20])
+    def on_closing():
+        if app.ser and app.ser.is_open:
+            app.ser.close()
+        root.destroy()
 
-    # Marcar picos automáticamente
-    if len(mags) > 2:
-        max_mag = max(mags)
-        umbral = max_mag * 0.3
-        for i in range(1, len(mags) - 1):
-            if mags[i] > umbral and mags[i] > mags[i - 1] and mags[i] > mags[i + 1]:
-                ax1.annotate(
-                    f"{freqs[i]:.2f} Hz",
-                    xy=(freqs[i], mags[i]),
-                    xytext=(freqs[i] + 0.2, mags[i] * 1.05),
-                    fontsize=8,
-                    color="red",
-                    arrowprops=dict(arrowstyle="->", color="red"),
-                )
-
-    # Gráfico 2: Historial de magnitud total (energía)
-    energia = sum(m * m for m in mags) ** 0.5
-    if not hasattr(actualizar, "historial"):
-        actualizar.historial = []
-    actualizar.historial.append(energia)
-    if len(actualizar.historial) > 50:
-        actualizar.historial.pop(0)
-
-    ax2.clear()
-    ax2.plot(actualizar.historial, "g-", linewidth=2)
-    ax2.set_xlabel("Ciclos de medición")
-    ax2.set_ylabel("Energía total")
-    ax2.set_title("Tendencia de energía de vibración")
-    ax2.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-
-
-ani = animation.FuncAnimation(fig, actualizar, interval=500, cache_frame_data=False)
-plt.show()
-
-# Cerrar puerto al cerrar la ventana
-if ser.is_open:
-    ser.close()
-    print("Puerto cerrado.")
+    root.protocol("WM_DELETE_WINDOW", on_closing)
+    root.mainloop()

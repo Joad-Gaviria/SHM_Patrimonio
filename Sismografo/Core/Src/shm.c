@@ -17,6 +17,9 @@
 #include <string.h>   /* memcpy, memset */
 #include <math.h>     /* fabsf           */
 #include <shm.h>
+#include <stdio.h>
+#include "stm32h7xx_hal.h"
+
 
 /* ── Constantes internas ───────────────────────────────── */
 #define PI      3.14159265358979323846f
@@ -101,7 +104,15 @@ uint32_t SHM_Welch(const float *señal_larga, uint32_t n_muestras,
     uint32_t paso = SHM_N * (100 - SHM_SOLAPAMIENTO) / 100;
     uint32_t n_min = SHM_LongitudBufferWelch();
 
-    if (n_muestras < n_min) return 0;
+    printf("    [W] n_muestras=%lu n_min=%lu paso=%lu\r\n",
+               (unsigned long)n_muestras,
+               (unsigned long)n_min,
+               (unsigned long)paso);
+
+    if (n_muestras < n_min){
+    	printf("    [W] ERROR: buffer insuficiente\r\n");
+    	return 0;
+    }
 
     /* Inicializar acumuladores a 0 */
     memset(_acum_mag,  0, sizeof(_acum_mag));
@@ -111,6 +122,7 @@ uint32_t SHM_Welch(const float *señal_larga, uint32_t n_muestras,
 
     for (uint32_t v = 0; v < SHM_WELCH_VENTANAS; v++)
     {
+    	uint32_t t0 = HAL_GetTick();
         uint32_t offset = v * paso;
 
         /* ── Copiar ventana al buffer de trabajo ── */
@@ -124,6 +136,12 @@ uint32_t SHM_Welch(const float *señal_larga, uint32_t n_muestras,
         /* ── Calcular FFT ── */
         int ret = FFT_Calcular(_ventana_work, _fft_bin_tmp,
                                SHM_N, SHM_FS_HZ, NULL);
+
+        uint32_t t1 = HAL_GetTick();
+                printf("    [W] ventana %lu: FFT_ret=%d  %lu ms\r\n",
+                       (unsigned long)v, ret, (unsigned long)(t1 - t0));
+
+
         if (ret != 0) continue;
 
         /* ── Acumular magnitud y fase ──
@@ -191,7 +209,6 @@ void SHM_DetectarPicos(const FFT_Bin *espectro, uint32_t N_2,
 {
     *n_picos = 0;
 
-    /* Ignorar bin 0 (DC) y el último bin */
     for (uint32_t k = 1; k < N_2 - 1 && *n_picos < SHM_MAX_PICOS; k++)
     {
         float m = espectro[k].magnitud;
@@ -207,16 +224,22 @@ void SHM_DetectarPicos(const FFT_Bin *espectro, uint32_t N_2,
         }
     }
 
-    /* Ordenar picos por magnitud descendente (burbuja simple, n <= 10) */
-    for (uint32_t i = 0; i < *n_picos - 1; i++) {
-        for (uint32_t j = 0; j < *n_picos - i - 1; j++) {
+    /* ── FIX: guardar en variable con signo antes de ordenar ── */
+    if (*n_picos < 2) return;  /* 0 o 1 picos → nada que ordenar */
+
+    uint32_t np = *n_picos;
+    for (uint32_t i = 0; i < np - 1; i++) {
+        for (uint32_t j = 0; j < np - i - 1; j++) {
             if (picos_out[j].magnitud < picos_out[j + 1].magnitud) {
-                SHM_Pico tmp    = picos_out[j];
-                picos_out[j]    = picos_out[j + 1];
+                SHM_Pico tmp     = picos_out[j];
+                picos_out[j]     = picos_out[j + 1];
                 picos_out[j + 1] = tmp;
             }
         }
     }
+    printf("  [P] n_picos=%lu, mag_max=%.6f\r\n",
+           (unsigned long)*n_picos,
+           espectro[1].magnitud);  /* para ver el orden de magnitud real */
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -309,32 +332,41 @@ static float    _freq_bins[SHM_N / 2];
 int SHM_Procesar(float *señal_larga, uint32_t n_muestras,
                  const SHM_LineaBase *lb, SHM_Resultado *resultado)
 {
-    /* ── Paso 1: Welch ── */
-	uint32_t ventanas = SHM_Welch(señal_larga, n_muestras,
-	                              shm_espectro_publico, _freq_bins);
-    if (ventanas == 0) return -1;
+	uint32_t t0, t1;
 
-    /* ── Paso 2: Detectar picos modales ── */
-    SHM_DetectarPicos(_espectro_welch, SHM_N / 2, SHM_FS_HZ,
-                      SHM_UMBRAL_PICO,
-                      resultado->picos, &resultado->n_picos);
+	    /* ── Paso 1: Welch ── */
+	    t0 = HAL_GetTick();
+	    printf("  [W] Iniciando Welch...\r\n");
 
-    /* ── Paso 3: Damage Index ── */
-    if (lb != NULL && lb->valida) {
-        resultado->damage_index = SHM_CalcularDamageIndex(
-            lb, resultado->picos, resultado->n_picos);
-    } else {
-        resultado->damage_index = 0.0f;
-    }
+	    uint32_t ventanas = SHM_Welch(señal_larga, n_muestras,
+	                                  shm_espectro_publico, _freq_bins);
 
-    /* ── Paso 4: Clasificar estado ── */
-    if (resultado->damage_index < SHM_DI_NORMAL) {
-        resultado->estado = SHM_ESTADO_SANO;
-    } else if (resultado->damage_index < SHM_DI_ALERTA) {
-        resultado->estado = SHM_ESTADO_VIGILAR;
-    } else {
-        resultado->estado = SHM_ESTADO_ALERTA;
-    }
+	    t1 = HAL_GetTick();
+	    printf("  [W] Welch termino: %lu ventanas en %lu ms\r\n",
+	           (unsigned long)ventanas, (unsigned long)(t1 - t0));
 
-    return 0;
+	    if (ventanas == 0) {
+	        printf("  [W] ERROR: ventanas=0\r\n");
+	        return -1;
+	    }
+
+	    /* ── Paso 2: Detectar picos ── */
+	    t0 = HAL_GetTick();
+	    printf("  [P] Detectando picos...\r\n");
+
+	    SHM_DetectarPicos(shm_espectro_publico, SHM_N / 2, SHM_FS_HZ,
+	                      SHM_UMBRAL_PICO,
+	                      resultado->picos, &resultado->n_picos);
+
+	    t1 = HAL_GetTick();
+	    printf("  [P] Picos: %lu encontrados en %lu ms\r\n",
+	           (unsigned long)resultado->n_picos, (unsigned long)(t1 - t0));
+
+	    /* ── Paso 3: Damage Index ── */
+	    resultado->damage_index = 0.0f;
+
+	    /* ── Paso 4: Estado ── */
+	    resultado->estado = SHM_ESTADO_SANO;
+
+	    return 0;
 }

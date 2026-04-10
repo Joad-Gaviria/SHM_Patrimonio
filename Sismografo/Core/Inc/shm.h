@@ -24,6 +24,7 @@
 #include "fft_analysis.h"
 #include <stdint.h>
 
+
 /* ── Configuración del sistema ─────────────────────────── */
 
 /* Frecuencia de muestreo del acelerómetro en Hz.

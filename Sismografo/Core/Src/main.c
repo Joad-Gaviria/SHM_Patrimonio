@@ -188,9 +188,19 @@ int main(void)
 		if (idx_muestra >= BUFFER_LEN) {
 		    idx_muestra = 0;
 
+		    printf("T1: Iniciando SHM_Procesar...\r\n");
+		        uint32_t t_ini = HAL_GetTick();
+
+		        SHM_Resultado res_test;
+		        int ret = SHM_Procesar(buffer_muestras, BUFFER_LEN, NULL, &res_test);
+
+		        uint32_t t_fin = HAL_GetTick();
+		        printf("T2: SHM_Procesar termino en %lu ms, ret=%d\r\n",
+		               (unsigned long)(t_fin - t_ini), ret);
+
 		    printf("PROCESANDO...\r\n");
 
-		    SHM_Resultado res_test;
+
 		    if (SHM_Procesar(buffer_muestras, BUFFER_LEN, NULL, &res_test) == 0) {
 
 		    	printf("ESPECTRO_START\r\n");

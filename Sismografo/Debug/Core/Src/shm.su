@@ -1,7 +1,7 @@
-../Core/Src/shm.c:54:6:SHM_AplicarVentanaHanning	24	static
-../Core/Src/shm.c:90:10:SHM_LongitudBufferWelch	16	static
-../Core/Src/shm.c:96:10:SHM_Welch	72	static
-../Core/Src/shm.c:186:6:SHM_DetectarPicos	64	static
-../Core/Src/shm.c:232:6:SHM_GrabarLineaBase	32	static
-../Core/Src/shm.c:266:7:SHM_CalcularDamageIndex	56	static
-../Core/Src/shm.c:307:5:SHM_Procesar	32	static
+../Core/Src/shm.c:59:6:SHM_AplicarVentanaHanning	24	static
+../Core/Src/shm.c:95:10:SHM_LongitudBufferWelch	16	static
+../Core/Src/shm.c:101:10:SHM_Welch	80	static
+../Core/Src/shm.c:206:6:SHM_DetectarPicos	72	static
+../Core/Src/shm.c:257:6:SHM_GrabarLineaBase	32	static
+../Core/Src/shm.c:291:7:SHM_CalcularDamageIndex	56	static
+../Core/Src/shm.c:332:5:SHM_Procesar	40	static
