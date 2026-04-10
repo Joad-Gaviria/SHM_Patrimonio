@@ -162,51 +162,57 @@ int main(void)
 	while (1)
 	{
 		/* ── Paso 1: Muestreo con temporización precisa ── */
-		uint32_t tick_ahora = HAL_GetTick(); // Saca el tick en el ciclo
+		uint32_t tick_ahora = HAL_GetTick();
 
 		if ((tick_ahora - tick_ultimo) >= INTERVALO_MUESTREO_MS) {
-			tick_ultimo = tick_ahora;
+		    tick_ultimo = tick_ahora;
 
-			LIS3DSH_ReadAccel(&hi2c1, &sismo_data);
+		    LIS3DSH_ReadAccel(&hi2c1, &sismo_data);
 
-			/* Magnitud del vector 3D de aceleración */
-			buffer_muestras[idx_muestra] = sqrtf(
-					sismo_data.ax_g * sismo_data.ax_g +
-					sismo_data.ay_g * sismo_data.ay_g +
-					sismo_data.az_g * sismo_data.az_g
-			);
-			idx_muestra++;
+		    buffer_muestras[idx_muestra] = sqrtf(
+		        sismo_data.ax_g * sismo_data.ax_g +
+		        sismo_data.ay_g * sismo_data.ay_g +
+		        sismo_data.az_g * sismo_data.az_g
+		    );
+		    idx_muestra++;
+
+		    /* ── Feedback: imprimir aceleración cruda cada muestra ── */
+		    /* Esto te permite ver que el sensor está activo mientras llena el buffer */
+		    printf("RAW,%.4f,%.4f,%.4f\r\n",
+		           sismo_data.ax_g,
+		           sismo_data.ay_g,
+		           sismo_data.az_g);
 		}
 
+		/* ── Paso 2: Buffer lleno → procesar ── */
 		if (idx_muestra >= BUFFER_LEN) {
 		    idx_muestra = 0;
 
-		    /* Calcular espectro con Welch (sin línea base) */
+		    printf("PROCESANDO...\r\n");
+
 		    SHM_Resultado res_test;
 		    if (SHM_Procesar(buffer_muestras, BUFFER_LEN, NULL, &res_test) == 0) {
 
-		        /* Enviar espectro completo en formato CSV:
-		         * frecuencia,magnitud  — Python lo grafica en tiempo real */
-		        printf("ESPECTRO_START\r\n");
-		        for (uint32_t k = 0; k < SHM_N / 2; k++) {
-		            float freq = (float)k * SHM_FS_HZ / (float)SHM_N;
-		            /* Solo bins con frecuencia útil: 0.1 Hz a 20 Hz para edificios */
-		            if (freq > 0.1f && freq < 20.0f) {
-		                printf("%.3f,%.6f\r\n",
-		                       freq,
-		                       res_test.picos[k < res_test.n_picos ? k : 0].magnitud);
-		            }
-		        }
-		        printf("ESPECTRO_END\r\n");
+		    	printf("ESPECTRO_START\r\n");
+		    	for (uint32_t k = 0; k < SHM_N / 2; k++) {
+		    	    float freq = (float)k * SHM_FS_HZ / (float)SHM_N;
+		    	    if (freq > 0.1f && freq < 20.0f) {
+		    	        printf("%.3f,%.6f\r\n",
+		    	               freq,
+		    	               shm_espectro_publico[k].magnitud);  /* ← espectro real */
+		    	    }
+		    	}
+		    	printf("ESPECTRO_END\r\n");
 
-		        /* Picos detectados */
-		        printf("PICOS: %lu\r\n", (unsigned long)res_test.n_picos);
+		        printf("PICOS:%lu\r\n", (unsigned long)res_test.n_picos);
 		        for (uint32_t i = 0; i < res_test.n_picos; i++) {
-		            printf("  PICO %lu: %.2f Hz  mag=%.5f\r\n",
-		                   (unsigned long)(i+1),
+		            printf("PICO %lu: %.2f Hz mag=%.5f\r\n",
+		                   (unsigned long)(i + 1),
 		                   res_test.picos[i].frecuencia_hz,
 		                   res_test.picos[i].magnitud);
 		        }
+		    } else {
+		        printf("ERROR: SHM_Procesar fallo\r\n");
 		    }
 		}
 		/* USER CODE END WHILE */

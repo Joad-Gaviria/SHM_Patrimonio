@@ -192,4 +192,7 @@ float SHM_CalcularDamageIndex(const SHM_LineaBase *lb,
 int SHM_Procesar(float *señal_larga, uint32_t n_muestras,
                  const SHM_LineaBase *lb, SHM_Resultado *resultado);
 
+/* Buffer público del espectro Welch — disponible después de SHM_Procesar() */
+extern FFT_Bin shm_espectro_publico[SHM_N / 2];
+
 #endif /* INC_SHM_H_ */

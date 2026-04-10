@@ -33,9 +33,11 @@ static float _ventana_work[SHM_N];
 /* Buffer acumulador del espectro promediado */
 static float _acum_mag[SHM_N / 2];
 static float _acum_fase[SHM_N / 2];
+static FFT_Bin _fft_bin_tmp[SHM_N / 2];   /* ← este es el que falta */
 
-/* Buffer de salida de FFT_Calcular() para una ventana */
-static FFT_Bin _fft_bin_tmp[SHM_N / 2];
+/* ── Buffer público del espectro Welch ── */
+FFT_Bin shm_espectro_publico[SHM_N / 2];
+static float _freq_bins[SHM_N / 2];
 
 /* ══════════════════════════════════════════════════════════
  *  1. VENTANA HANNING
@@ -308,8 +310,8 @@ int SHM_Procesar(float *señal_larga, uint32_t n_muestras,
                  const SHM_LineaBase *lb, SHM_Resultado *resultado)
 {
     /* ── Paso 1: Welch ── */
-    uint32_t ventanas = SHM_Welch(señal_larga, n_muestras,
-                                  _espectro_welch, _freq_bins);
+	uint32_t ventanas = SHM_Welch(señal_larga, n_muestras,
+	                              shm_espectro_publico, _freq_bins);
     if (ventanas == 0) return -1;
 
     /* ── Paso 2: Detectar picos modales ── */
