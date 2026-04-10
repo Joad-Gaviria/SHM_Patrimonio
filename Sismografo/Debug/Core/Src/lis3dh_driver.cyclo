@@ -1,0 +1,4 @@
+../Core/Src/lis3dh_driver.c:10:16:ReadReg	1
+../Core/Src/lis3dh_driver.c:16:13:WriteReg	1
+../Core/Src/lis3dh_driver.c:20:9:LIS3DSH_Init	2
+../Core/Src/lis3dh_driver.c:33:6:LIS3DSH_ReadAccel	1

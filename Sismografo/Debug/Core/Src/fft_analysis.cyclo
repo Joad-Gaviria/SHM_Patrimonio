@@ -1,0 +1,7 @@
+../Core/Src/fft_analysis.c:22:12:es_potencia_de_2	3
+../Core/Src/fft_analysis.c:30:17:log2_entero	2
+../Core/Src/fft_analysis.c:49:13:bit_reversal	4
+../Core/Src/fft_analysis.c:89:13:fft_cooley_tukey	4
+../Core/Src/fft_analysis.c:148:5:FFT_Calcular	6
+../Core/Src/fft_analysis.c:197:7:FFT_FrecuenciaDominante	3
+../Core/Src/fft_analysis.c:218:6:FFT_Normalizar	2
