@@ -29,7 +29,7 @@
 
 /* Frecuencia de muestreo del acelerómetro en Hz.
  * Para edificios: las frecuencias modales suelen estar
- * entre 0.5 Hz y 20 Hz, así que 200 Hz es más que suficiente.
+ * entre 0.5 Hz y 20 Hz, así que 100 Hz es más que suficiente.
  * Ajusta según tu sensor. */
 #define SHM_FS_HZ   100.0f
 
@@ -52,7 +52,7 @@
 
 /* Umbral mínimo de magnitud para considerar un pico válido.
  * Ajustar según el nivel de ruido de tu instalación. */
-#define SHM_UMBRAL_PICO     0.01f
+#define SHM_UMBRAL_PICO    0.00020f
 
 /* Umbrales del Damage Index
  *  < DI_NORMAL  : estructura sana

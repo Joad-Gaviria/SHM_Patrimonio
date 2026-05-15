@@ -58,6 +58,11 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 
+// Muestras de warm-up antes de arrancar calibración
+// Con HP_ALPHA=0.995 y fs=100Hz, constante de tiempo ≈ 200 muestras
+#define WARMUP_MUESTRAS   300U
+static uint32_t warmup_cnt = 0;
+static uint8_t  warmup_ok  = 0;
 LIS3DSH_Data sismo_data;
 
 // Buffer de captura para Welch
@@ -69,7 +74,6 @@ static float buffer_muestras[BUFFER_LEN];
 // Línea base y resultado SHM
 
 static SHM_LineaBase linea_base;
-static SHM_Resultado resultado_shm;
 
 // Flag: 0 = necesita calibrar, 1 = calibrado
 static uint8_t calibrado = 0;
@@ -155,6 +159,12 @@ int main(void)
 
 	printf("Iniciando calibracion (edificio en reposo)...\r\n");
 	tick_ultimo = HAL_GetTick();
+
+	static float hp_prev_in  = 0.0f;
+	static float hp_prev_out = 0.0f;
+	// α = fc / (fc + fs) con fc=0.5Hz, fs=100Hz → α ≈ 0.995
+#define HP_ALPHA 0.9950f
+
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
@@ -164,66 +174,116 @@ int main(void)
 		/* ── Paso 1: Muestreo con temporización precisa ── */
 		uint32_t tick_ahora = HAL_GetTick();
 
+
+
 		if ((tick_ahora - tick_ultimo) >= INTERVALO_MUESTREO_MS) {
-		    tick_ultimo = tick_ahora;
+			tick_ultimo = tick_ahora;
 
-		    LIS3DSH_ReadAccel(&hi2c1, &sismo_data);
+			LIS3DSH_ReadAccel(&hi2c1, &sismo_data);
 
-		    buffer_muestras[idx_muestra] = sqrtf(
-		        sismo_data.ax_g * sismo_data.ax_g +
-		        sismo_data.ay_g * sismo_data.ay_g +
-		        sismo_data.az_g * sismo_data.az_g
-		    );
-		    idx_muestra++;
+			float muestra_raw= sqrtf(
+					sismo_data.ax_g * sismo_data.ax_g +
+					sismo_data.ay_g * sismo_data.ay_g +
+					sismo_data.az_g * sismo_data.az_g);
 
-		    /* ── Feedback: imprimir aceleración cruda cada muestra ── */
-		    /* Esto te permite ver que el sensor está activo mientras llena el buffer */
-		    printf("RAW,%.4f,%.4f,%.4f\r\n",
-		           sismo_data.ax_g,
-		           sismo_data.ay_g,
-		           sismo_data.az_g);
+			float muestra_hp  = HP_ALPHA * (hp_prev_out + muestra_raw - hp_prev_in);
+			hp_prev_in  = muestra_raw;
+			hp_prev_out = muestra_hp;
+			buffer_muestras[idx_muestra] = muestra_hp;
+			if (!warmup_ok) {
+				warmup_cnt++;
+				if (warmup_cnt >= WARMUP_MUESTRAS) {
+					warmup_ok = 1;
+					printf("[HP] Filtro en regimen. Iniciando captura.\r\n");
+				}
+			} else {
+				idx_muestra++;
+			}
+
+			/* ── Feedback: imprimir aceleración cruda cada muestra ── */
+			/* Esto te permite ver que el sensor está activo mientras llena el buffer */
+			printf("RAW,%.4f,%.4f,%.4f\r\n",
+					sismo_data.ax_g,
+					sismo_data.ay_g,
+					sismo_data.az_g);
 		}
 
 		/* ── Paso 2: Buffer lleno → procesar ── */
 		if (idx_muestra >= BUFFER_LEN) {
-		    idx_muestra = 0;
+			idx_muestra = 0;
 
-		    printf("T1: Iniciando SHM_Procesar...\r\n");
-		        uint32_t t_ini = HAL_GetTick();
+			printf("T1: Iniciando SHM_Procesar...\r\n");
+			uint32_t t_ini = HAL_GetTick();
 
-		        SHM_Resultado res_test;
-		        int ret = SHM_Procesar(buffer_muestras, BUFFER_LEN, NULL, &res_test);
+			SHM_Resultado res_test;
 
-		        uint32_t t_fin = HAL_GetTick();
-		        printf("T2: SHM_Procesar termino en %lu ms, ret=%d\r\n",
-		               (unsigned long)(t_fin - t_ini), ret);
+			if (SHM_Procesar(buffer_muestras, BUFFER_LEN,
+					calibrado ? &linea_base : NULL,
+							&res_test) == 0) {
 
-		    printf("PROCESANDO...\r\n");
+				uint32_t t_fin = HAL_GetTick();
+				printf("T2: SHM_Procesar termino en %lu ms\r\n",
+						(unsigned long)(t_fin - t_ini));
 
+				printf("ESPECTRO_START\r\n");
+				for (uint32_t k = 0; k < SHM_N / 2; k++) {
+					float freq = (float)k * SHM_FS_HZ / (float)SHM_N;
+					if (freq > 0.0f && freq < 20.0f) {
+						printf("%.3f,%.6f\r\n",
+								freq,
+								shm_espectro_publico[k].magnitud);  /* ← espectro real */
+					}
+				}
+				printf("ESPECTRO_END\r\n");
 
-		    if (SHM_Procesar(buffer_muestras, BUFFER_LEN, NULL, &res_test) == 0) {
+				printf("PICOS:%lu\r\n", (unsigned long)res_test.n_picos);
+				for (uint32_t i = 0; i < res_test.n_picos; i++) {
+					printf("PICO %lu: %.2f Hz mag=%.5f\r\n",
+							(unsigned long)(i + 1),
+							res_test.picos[i].frecuencia_hz,
+							res_test.picos[i].magnitud);
+				}
 
-		    	printf("ESPECTRO_START\r\n");
-		    	for (uint32_t k = 0; k < SHM_N / 2; k++) {
-		    	    float freq = (float)k * SHM_FS_HZ / (float)SHM_N;
-		    	    if (freq > 0.1f && freq < 20.0f) {
-		    	        printf("%.3f,%.6f\r\n",
-		    	               freq,
-		    	               shm_espectro_publico[k].magnitud);  /* ← espectro real */
-		    	    }
-		    	}
-		    	printf("ESPECTRO_END\r\n");
+				printf("DI:%.5f Estado:%d\r\n",
+						res_test.damage_index,
+						res_test.estado);
 
-		        printf("PICOS:%lu\r\n", (unsigned long)res_test.n_picos);
-		        for (uint32_t i = 0; i < res_test.n_picos; i++) {
-		            printf("PICO %lu: %.2f Hz mag=%.5f\r\n",
-		                   (unsigned long)(i + 1),
-		                   res_test.picos[i].frecuencia_hz,
-		                   res_test.picos[i].magnitud);
-		        }
-		    } else {
-		        printf("ERROR: SHM_Procesar fallo\r\n");
-		    }
+				/* ── Flujo de calibración automática ── */
+				if (!calibrado) {
+					static uint32_t mediciones_calib = 0;
+					mediciones_calib++;
+					printf("[CALIB] Medicion %lu de 5...\r\n",
+							(unsigned long)mediciones_calib);
+
+					if (mediciones_calib >= 5) {
+						/* No grabar si no hay picos definidos (sensor quieto
+						 * o estructura con vibración por debajo del umbral) */
+						if (res_test.n_picos == 0) {
+							printf("[CALIB] Sin picos detectados, reintentando...\r\n");
+							mediciones_calib = 4; /* fuerza una medición más */
+							idx_muestra = 0;
+							continue;
+						}
+						SHM_GrabarLineaBase(&linea_base,
+								res_test.picos,
+								res_test.n_picos);
+						calibrado = 1;
+						printf("[CALIB] Linea base grabada. Sistema CALIBRADO.\r\n");
+						/* Saltar el resto del ciclo: el DI de este mismo ciclo
+						 * se calcula contra la línea base que acabamos de grabar
+						 * a partir de LOS MISMOS picos — daría DI=0 siempre.
+						 * El primer DI real llega en la siguiente medición. */
+						idx_muestra = 0;
+						continue;   /* ← volver al while(1) */
+					}
+					/* Durante calibración no imprimir DI (es siempre 0) */
+					idx_muestra = 0;
+					continue;
+				}
+			}
+			else {
+				printf("ERROR: SHM_Procesar fallo\r\n");
+			}
 		}
 		/* USER CODE END WHILE */
 
