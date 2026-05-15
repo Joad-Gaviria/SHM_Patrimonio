@@ -71,7 +71,7 @@ class SismografoApp:
         self.lbl_debug.pack(side=tk.RIGHT, padx=10)
 
         # Gráficos
-        self.fig, (self.ax1, self.ax2) = plt.subplots(2, 1, figsize=(9, 6))
+        self.fig, self.ax1 = plt.subplots(1, 1, figsize=(9, 4))
         self.fig.tight_layout(pad=4.0)
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
@@ -214,21 +214,6 @@ class SismografoApp:
                             color="red",
                             arrowprops=dict(arrowstyle="->", color="red", lw=0.8),
                         )
-
-        # ── Gráfico 2: Energía acumulada ──
-        energia = sum(m * m for m in self.mags) ** 0.5
-        self.historial_energia.append(energia)
-        if len(self.historial_energia) > 60:
-            self.historial_energia.pop(0)
-
-        self.ax2.clear()
-        self.ax2.plot(self.historial_energia, color="#2ca02c", linewidth=2)
-        self.ax2.set_title("Tendencia de Energía", fontsize=10, fontweight="bold")
-        self.ax2.set_xlabel("Ciclos de medición")
-        self.ax2.set_ylabel("Energía (g·rms)")
-        self.ax2.grid(True, linestyle="--", alpha=0.5)
-
-        self.fig.tight_layout(pad=3.0)
 
 
 if __name__ == "__main__":
